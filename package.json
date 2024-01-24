@@ -1,0 +1,17 @@
+{
+  "name": "esa-sync-importer",
+  "version": "1.0.0",
+  "description": "esa.ioにrsyncのような使い勝手で記事を同期",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Interrupt, Inc.",
+  "license": "MIT",
+  "dependencies": {
+    "@suin/esa-api": "^4.0.1",
+    "commander": "^11.1.0",
+    "dotenv": "^16.4.0",
+    "glob": "^10.3.10"
+  }
+}
