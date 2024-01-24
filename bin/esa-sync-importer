@@ -1,0 +1,33 @@
+#!/bin/sh
+
+if [ ! -e ./index.js ]; then
+  cd ..
+fi
+
+if type node > /dev/null 2>&1; then
+  NODE_PATH=$(which node)
+elif [ -e /usr/local/bin/nodejs ]; then
+  NODE_PATH=/usr/local/bin/nodejs
+elif [ -e /usr/local/bin/node ]; then
+  NODE_PATH=/usr/local/bin/node
+elif [ -e /usr/bin/node ]; then
+  NODE_PATH=/usr/bin/node
+elif [ -e /usr/local/opt/node/bin/node ]; then
+  NODE_PATH=/usr/local/opt/node/bin/node
+elif [ -e /usr/local/opt/node@14/bin/node ]; then
+  NODE_PATH=/usr/local/opt/node@14/bin/node
+elif [ -e /usr/local/opt/node@12/bin/node ]; then
+  NODE_PATH=/usr/local/opt/node@12/bin/node
+elif [ -e /usr/local/opt/node@10/bin/node ]; then
+  NODE_PATH=/usr/local/opt/node@10/bin/node
+elif [ -e /usr/local/opt/node@8/bin/node ]; then
+  NODE_PATH=/usr/local/opt/node@8/bin/node
+elif [ -e /opt/homebrew/bin/node ]; then
+  NODE_PATH=/opt/homebrew/bin/node
+else
+  echo "node not found."
+  exit 1
+fi
+
+$NODE_PATH index.js "$@"
+
