@@ -8,6 +8,7 @@ program
   .option(('-t, --team <team>'), '同期先のesa.ioのチーム名')
   .option('-w, --wip', 'WIP状態で投稿')
   .option(('-n, --dry-run'), 'Dry Runモードによる実行')
+  .option(('-i, --ignore-existing'), 'すでに同じタイトルの記事がある場合はスキップ')
   .argument('<source>', 'source')
   .argument('<destination>', 'esa.ioの同期先')
   .description('sync files from source to destination')
