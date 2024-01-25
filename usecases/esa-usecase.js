@@ -26,6 +26,7 @@ class EsaUsecase {
    * @param team {string} 同期先のチーム名
    * @param wip {boolean} WIP状態で投稿するかどうか
    * @param dryRun {boolean} Dry Runモードによる実行かどうか
+   * @param ignoreExisting {boolean} すでに同じタイトルの記事がある場合はスキップするかどうか
    */
   async sync({ source, destination, options: { team, wip, dryRun, ignoreExisting } }) {
 
@@ -59,11 +60,11 @@ class EsaUsecase {
         console.debug('this post is already exists. post: ', `${category}/${name}`);
         continue;
       }
-      await this.syncFile({ file, source, destination, team, wip, dryRun });
+      await this.syncFile({ file, source, destination, team, wip, dryRun, ignoreExisting });
     }
   }
 
-  async syncFile({ file, source, destination, team, wip, dryRun }) {
+  async syncFile({ file, source, destination, team, wip, dryRun, ignoreExisting }) {
 
     const { category, name } = this.formatName({ file, source, destination });
 
@@ -77,38 +78,38 @@ class EsaUsecase {
     }
 
     // すでに同じタイトルの記事があるかどうかをチェックする
-    const q = `on:"${category}" name:"${name}"`;
-    console.debug('q =', q);
-    const existingResponse = await this.client.getPosts({
-      teamName: team,
-      q,
-      perPage: 1,
-    }).catch(error => error);
+    if (!ignoreExisting) {
+      const q = `on:"${category}" name:"${name}"`;
+      console.debug('q =', q);
+      const response = await this.client.getPosts({
+        teamName: team,
+        q,
+        perPage: 1,
+      }).catch(error => error);
 
-    if (existingResponse?.response?.status === 429) {
-      await this.waitRateLimit({ response: existingResponse });
-      await this.syncFile({ file, source, destination, team, wip });
-      return
-    }
-
-    if (existingResponse?.status !== 200) {
-      console.debug('existingResponse =', existingResponse);
-      throw new Error(
-        `failed to get post with status code ${existingResponse?.response?.status} / ${existingResponse?.response?.data?.message}`);
-    }
-    if ((existingResponse?.data?.posts?.length ?? 0) > 0) {
-
-      console.debug('this post is already exists. post: ', existingResponse.data.posts[0].name);
-
-      await this.waitRateLimit({ response: existingResponse });
-      const postId = existingResponse?.data?.posts[0]?.number;
-
-      if (!postId) {
-        throw new Error('postId is empty');
+      if (response?.response?.status === 429) {
+        await this.waitRateLimit({ response });
+        await this.syncFile({ file, source, destination, team, wip });
+        return
       }
 
-      await this.updateFile({ postId, name, body, team });
-      return
+      if (response?.status !== 200) {
+        console.debug('existingResponse =', response);
+        throw new Error(
+          `failed to get post with status code ${response?.response?.status} / ${response?.response?.data?.message}`);
+      }
+
+      if ((response?.data?.posts?.length ?? 0) > 0) {
+        console.debug('this post is already exists. post: ', response.data.posts[0].name);
+        await this.waitRateLimit({ response: response });
+        const postId = response?.data?.posts[0]?.number;
+        if (!postId) {
+          throw new Error('postId is empty');
+        }
+        await this.updateFile({ postId, name, body, team });
+        return
+      }
+
       await this.waitRateLimit({ response });
     }
 
