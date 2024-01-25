@@ -39,7 +39,7 @@ bin/esa-sync-importer [options] <source> <destination>
   * `-w`, `--wip` : WIPで投稿する
   * `-n`, `--dry-run` : ドライラン
   * `-t`, `--team` : esa.ioのチーム名(必須)
-  * `-i=`, `--ignore-existing` : すでに同じタイトルの記事がある場合はスキップ
+  * `-i`, `--ignore-existing` : すでに同じタイトルの記事がある場合はスキップ
 * source : インポートするファイルのあるディレクトリ
 * destination : インポート先のesa.ioのチーム名とカテゴリ名を指定する    
   `team-name/category-name` のように指定する。    
