@@ -44,8 +44,11 @@ class EsaUsecase {
       throw new Error(`team name "${team}" is empty`);
     }
     // ディレクトリから.txtか.mdのファイルを取得
-    const files = await glob(`${source}/**/*.{txt,md}`, {
+    const files = (await glob(`${source}/**/*.{txt,md}`, {
       ignore: ['**/node_modules/**', '**/log/**', '**/logs/**', '**/tmp/**']
+    })).sort( (a, b) => {
+      // 更新順にソート(降順)
+      return fs.statSync(b).mtime.getTime() - fs.statSync(a).mtime.getTime();
     });
 
     for (const file of files) {
