@@ -2,7 +2,7 @@ const fs = require('fs');
 const {
   glob,
 } = require('glob');
-const {createClient} = require("@suin/esa-api");
+const { createClient } = require("@suin/esa-api");
 const path = require("path");
 
 class EsaUsecase {
@@ -27,7 +27,7 @@ class EsaUsecase {
    * @param wip {boolean} WIP状態で投稿するかどうか
    * @param dryRun {boolean} Dry Runモードによる実行かどうか
    */
-  async sync({source, destination, options: {team, wip, dryRun}}) {
+  async sync({ source, destination, options: { team, wip, dryRun, ignoreExisting } }) {
 
     // ディレクトリ存在チェック
     if (!fs.existsSync(source)) {
@@ -45,79 +45,69 @@ class EsaUsecase {
     }
     // ディレクトリから.txtか.mdのファイルを取得
     const files = (await glob(`${source}/**/*.{txt,md}`, {
-      ignore: ['**/node_modules/**', '**/log/**', '**/logs/**', '**/tmp/**']
-    })).sort( (a, b) => {
+      ignore: [ '**/node_modules/**', '**/log/**', '**/logs/**', '**/tmp/**' ]
+    })).sort((a, b) => {
       // 更新順にソート(降順)
       return fs.statSync(b).mtime.getTime() - fs.statSync(a).mtime.getTime();
     });
 
-    for (const file of files) {
-      await this.syncFile({file, source, destination, team, wip, dryRun});
+    const alreadyExistPosts = ignoreExisting ? await this.getPosts({ destination, team }) : [];
+
+    for ( const file of files ) {
+      const { name, category } = this.formatName({ file, source, destination });
+      if (alreadyExistPosts.find(post => post.name === name && post.category === category)) {
+        console.debug('this post is already exists. post: ', `${category}/${name}`);
+        continue;
+      }
+      await this.syncFile({ file, source, destination, team, wip, dryRun });
     }
   }
 
-  async syncFile({file, source, destination, team, wip, dryRun}) {
+  async syncFile({ file, source, destination, team, wip, dryRun }) {
 
-    const _title = `${
-      this.replaceFirst(file, source, '')
-        .replace(/\.(txt|md)$/, '')
-        .replace(/^\//, '')
-        .trim()
-    }`
-      .replaceAll('//', '/');
+    const { category, name } = this.formatName({ file, source, destination });
 
-    const longTitle = `${destination.replace(/\/$/, '')}/${_title}`;
-    const category = path.dirname(longTitle);
-    const title = path.basename(longTitle);
-
-    console.debug('title =', title, '/ category =', category);
+    console.debug('name =', name, '/ category =', category);
 
     const body = fs.readFileSync(file, 'utf8');
 
     if (dryRun) {
-      console.debug(`dry run: ${category}/${title}`);
+      console.debug(`dry run: ${category}/${name}`);
       return;
     }
 
     // すでに同じタイトルの記事があるかどうかをチェックする
-    const q = `on:"${category}" name:"${title}"`;
+    const q = `on:"${category}" name:"${name}"`;
     console.debug('q =', q);
     const existingResponse = await this.client.getPosts({
       teamName: team,
       q,
       perPage: 1,
-    });
+    }).catch(error => error);
 
-    const rateLimitRemainingOfExisting = existingResponse.headers['x-ratelimit-remaining'];
-    const rateLimitResetOfExisting = existingResponse.headers['x-ratelimit-reset'];
-    const ratelimitLimitOfExisting = existingResponse.headers['x-ratelimit-limit'];
-
-    if ( existingResponse?.status === 429 ) {
-      // 再試行する
-      const waitTime = Math.ceil((rateLimitResetOfExisting - Date.now() / 1000) / rateLimitRemainingOfExisting);
-      console.debug(`rate limit exceeded. wait for ${waitTime} seconds. remaining ${rateLimitRemainingOfExisting} / ${ratelimitLimitOfExisting}`);
-      await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
-      await this.syncFile({file, source, destination, team, wip});
+    if (existingResponse?.response?.status === 429) {
+      await this.waitRateLimit({ response: existingResponse });
+      await this.syncFile({ file, source, destination, team, wip });
       return
     }
 
     if (existingResponse?.status !== 200) {
-      throw new Error('failed to get post with status code ' + existingResponse?.status + ' / ' + existingResponse?.data?.message);
+      console.debug('existingResponse =', existingResponse);
+      throw new Error(
+        `failed to get post with status code ${existingResponse?.response?.status} / ${existingResponse?.response?.data?.message}`);
     }
     if ((existingResponse?.data?.posts?.length ?? 0) > 0) {
 
       console.debug('this post is already exists. post: ', existingResponse.data.posts[0].name);
 
-      const waitTime = Math.ceil((rateLimitResetOfExisting - Date.now() / 1000) / rateLimitRemainingOfExisting);
-      console.debug(`wait for ${waitTime} seconds. remaining ${rateLimitRemainingOfExisting} / ${ratelimitLimitOfExisting}`);
-      await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+      await this.waitRateLimit({ response: existingResponse });
       const postId = existingResponse?.data?.posts[0]?.number;
 
       if (!postId) {
         throw new Error('postId is empty');
       }
 
-      await this.updateFile({postId, title, body, team, wip});
+      await this.updateFile({ postId, name, body, team });
       return
     }
 
@@ -125,89 +115,113 @@ class EsaUsecase {
     const response = await this.client.createPost({
       teamName: team,
       post: {
-        name: title,
+        name,
         body_md: body,
         tags: [],
         category,
         wip: wip || false,
         message: "sync from esa sync importer",
       },
-    });
+    }).catch(error => error);
 
-    // 現時点では、ユーザ毎に15分間に75リクエストまで受け付けます。
-    // https://docs.esa.io/posts/102#%E5%88%A9%E7%94%A8%E5%88%B6%E9%99%90
-    const rateLimitRemaining = response.headers['x-ratelimit-remaining'];
-    const rateLimitReset = response.headers['x-ratelimit-reset'];
-    const ratelimitLimit = response.headers['x-ratelimit-limit'];
-    const waitTime = Math.ceil((rateLimitReset - Date.now() / 1000) / rateLimitRemaining);
-
-    if (response?.status === 429) {
-      // 再試行する
-      console.debug(`rate limit exceeded. wait for ${waitTime} seconds. remaining ${rateLimitRemaining} / ${ratelimitLimit}`);
-      await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
-      await this.syncFile({file, source, destination, team, wip});
+    if (response?.response?.status === 429 || response?.status === 429) {
+      await this.waitRateLimit({ response });
+      await this.syncFile({ file, source, destination, team, wip });
       return
     }
 
     if (response?.status !== 201) {
-      throw new Error('failed to create post with status code ' + response?.status + ' / ' + response?.data?.message);
+      console.debug('response =', response);
+      throw new Error('failed to create post with status code ' + response?.response?.status + ' / ' + response?.response?.data?.message);
     }
 
-    console.debug('added post: ', response.data.name);
+    console.debug('added post: ', response.data.full_name);
+    await this.waitRateLimit({ response });
+  }
 
-    // 上記3つの変数によってレートリミットを消化し尽くさない時間調整を行う計算式
-    console.debug(`wait for ${waitTime} seconds. remaining ${rateLimitRemaining} / ${ratelimitLimit}`);
-    await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+
+  /**
+   * 投稿一覧を取得する
+   * @param files
+   * @param destination
+   * @param team
+   * @returns {Promise<{ name: string, category: string }[]>}
+   */
+  async getPosts({ destination, team }) {
+    const posts = [];
+    let page = 1;
+
+    while ( true ) {
+      const response = await this.client.getPosts({
+        teamName: team,
+        q: `in:"${destination.replace(/\/$/, '')}"`,
+        perPage: 100,
+        page,
+      }).catch(error => error);
+
+      if (response?.response?.status === 429 || response?.status === 429) {
+        await this.waitRateLimit({ response });
+        continue;
+      }
+
+      if (response?.status !== 200) {
+        console.debug('response =', response);
+        throw new Error('failed to get post with status code ' + response?.response?.status + ' / ' + response?.response?.data?.message);
+      }
+
+      if (response?.data?.posts?.length === 0) {
+        await this.waitRateLimit({ response });
+        break;
+      }
+
+      response.data.posts.forEach(post => {
+        posts.push({ name: post.name, category: post.category });
+      });
+
+      await this.waitRateLimit({ response, message: `current page index: ${page}` });
+      if (response.data.posts.length < 100) {
+        break;
+      }
+      page++;
+    }
+    return posts;
   }
 
   /**
    * 記事を更新する
    * @param postId {string}
-   * @param title {string}
+   * @param name {string}
    * @param body {string}
    * @param team {string}
-   * @param wip {boolean}
    */
-  async updateFile({postId, title, body, team, wip}) {
+  async updateFile({ postId, name, body, team }) {
 
     const response = await this.client.updatePost({
       teamName: team,
       postNumber: postId,
       updatePostBody: {
         post: {
-          name: title,
-          wip: wip || false,
+          name,
           message: "sync from esa sync importer",
           tags: [],
           body_md: body,
         },
       },
       postId,
-    });
+    }).catch(error => error);
 
-    const rateLimitRemaining = response.headers['x-ratelimit-remaining'];
-    const rateLimitReset = response.headers['x-ratelimit-reset'];
-    const ratelimitLimit = response.headers['x-ratelimit-limit'];
-    const waitTime = Math.ceil((rateLimitReset - Date.now() / 1000) / rateLimitRemaining);
-
-    if (response?.status === 429) {
-      // 再試行する
-      console.debug(`rate limit exceeded. wait for ${waitTime} seconds. remaining ${rateLimitRemaining} / ${ratelimitLimit}`);
-      await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
-      await this.updateFile({postId, title, body, team, wip});
+    if (response?.response?.status === 429 || response?.status === 429) {
+      await this.waitRateLimit({ response });
+      await this.updateFile({ postId, name, body, team });
       return
     }
 
     if (response?.status !== 200) {
-      throw new Error('failed to update post with status code ' + response?.status + ' / ' + response?.data?.message);
+      console.debug('response =', response);
+      throw new Error('failed to update post with status code ' + response?.response?.status + ' / ' + response?.response?.data?.message);
     }
-
-    console.debug('update post: ', response.data.name);
-
-    // 上記3つの変数によってレートリミットを消化し尽くさない時間調整を行う計算式
-    console.debug(`wait for ${waitTime} seconds. remaining ${rateLimitRemaining} / ${ratelimitLimit}`);
-    await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
-
+    console.debug('updated post: ', response.data.full_name);
+    await this.waitRateLimit({ response });
   }
 
   /**
@@ -224,6 +238,51 @@ class EsaUsecase {
     }
     return str.slice(0, index) + replace + str.slice(index + search.length);
   }
+
+  /**
+   * 件名の整形
+   * @param file {string}
+   * @param source {string}
+   * @param destination {string}
+   * @returns {{longTitle: string, category: string, name: string}}
+   */
+  formatName({ file, source, destination }) {
+    const _name = `${
+      this.replaceFirst(file, source, '')
+        .replace(/\.(txt|md)$/, '')
+        .replace(/^\//, '')
+        .trim()
+    }`
+      .replaceAll('//', '/');
+
+    const fullName = `${destination.replace(/\/$/, '')}/${_name}`;
+    const category = path.dirname(fullName);
+    const name = path.basename(fullName);
+
+    return { fullName, category, name };
+  }
+
+  /**
+   * レートリミットの待機
+   * 現時点では、ユーザ毎に15分間に75リクエストまで受け付けます。
+   * https://docs.esa.io/posts/102#%E5%88%A9%E7%94%A8%E5%88%B6%E9%99%90
+   */
+  async waitRateLimit({ response, message }) {
+    const rateLimitRemaining = response.headers['x-ratelimit-remaining'];
+    const rateLimitReset = response.headers['x-ratelimit-reset'];
+    const ratelimitLimit = response.headers['x-ratelimit-limit'];
+    const waitTimeDecimal = (rateLimitReset - Date.now() / 1000) / rateLimitRemaining;
+    const waitTime = Math.ceil(waitTimeDecimal);
+    if (response.status === 429) {
+      console.debug(
+        `rate limit exceeded. wait for ${waitTime} seconds. remaining ${rateLimitRemaining} / ${ratelimitLimit}`);
+    } else {
+      console.debug(`${message ? message + '. ' :
+        ''}wait for ${waitTime} seconds. remaining ${rateLimitRemaining} / ${ratelimitLimit}`);
+    }
+    return new Promise(resolve => setTimeout(resolve, waitTimeDecimal * 1000));
+  }
+
 }
 
 module.exports = {
