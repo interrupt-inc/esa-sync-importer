@@ -170,12 +170,14 @@ class EsaUsecase {
       }
 
       if (response?.data?.posts?.length === 0) {
+        await this.waitRateLimit({ response });
         break;
       }
 
       response.data.posts.forEach(post => {
         posts.push({ name: post.name, category: post.category });
       });
+
       await this.waitRateLimit({ response, message: `current page index: ${page}` });
       if (response.data.posts.length < 100) {
         break;
