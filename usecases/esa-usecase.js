@@ -109,6 +109,7 @@ class EsaUsecase {
 
       await this.updateFile({ postId, name, body, team });
       return
+      await this.waitRateLimit({ response });
     }
 
     // 記事を新規投稿する
