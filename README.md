@@ -50,8 +50,8 @@ bin/esa-sync-importer [options] <source> <destination>
   * `-i`, `--ignore-existing` : すでに同じタイトルの記事がある場合はスキップ
 * source : インポートするファイルのあるディレクトリ
 * destination : インポート先のesa.ioのカテゴリ名を指定する    
-  `team-name/category-name` のように指定する。    
-  例: `esa-sync-importer ./docs category-name`
+  `category-name/aaa/bbb` のように指定する。    
+  例: `esa-sync-importer ./docs category-name/aaa/bbb`
   
 
 ## WIPフラグ
